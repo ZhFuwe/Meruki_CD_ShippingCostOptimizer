@@ -1,7 +1,7 @@
 # Meruki_CD_ShippingCostOptimizer
 为挖煤姬购买CD专辑设计的合单方案优化器，最小化运费成本
 
-<img width="2560" height="1522" alt="image" src="https://github.com/user-attachments/assets/758f11ed-54bf-49e5-ba1b-e5137b4d5c2c" />
+<img width="2560" height="1520" alt="image" src="https://github.com/user-attachments/assets/9a277127-b7b8-41aa-a404-b7cd18f603ef" />
 
 ---
 
