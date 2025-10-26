@@ -27,7 +27,7 @@
 
 ---
 
-`run_pso_sa_optimization`为`false`时，仅使用贪心算法求解；为`true`时，程序会在贪心结果的基础上使用 POS-SA 进一步优化。
+`run_pso_sa_optimization`为`false`时，仅使用贪心算法求解；为`true`时，程序会在贪心结果的基础上使用 PSO-SA 进一步优化。
 
 本程序支持积分抵扣计算，请在`points_balance`填入你的积分余额。
 
