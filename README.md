@@ -19,7 +19,7 @@
 
 ---
 
-在运行优化器前，你需要正确填写`ShoppingList.csv`，示例如下：
+在运行优化器前，你需要正确填写`ShoppingList.csv`，一行对应一个待合单订单，示例如下：
 
 
 
@@ -46,7 +46,7 @@
 
 ---
 
-`run_pso_sa_optimization`为`false`时，仅使用贪心算法求解；为`true`时，程序会在贪心结果的基础上使用 POS-SA 进一步优化。
+`run_pso_sa_optimization`为`false`时，仅使用贪心算法求解；为`true`时，程序会在贪心结果的基础上使用 PSO-SA 进一步优化。
 
 本程序支持积分抵扣计算，请在`points_balance`填入你的积分余额。
 
@@ -58,6 +58,16 @@
 
 (譬如：竹蜻蜓PLUS要求包裹长度不超过60cm；竹蜻蜓Max要求包裹金额不得高于2000RMB等。)
 
-请务必仔细阅读官方使用指南: https://www.meruki.cn/userGuide/novice-strategy?code=novice-strategy ,确保合单方案合规.
+请务必仔细阅读官方使用指南: https://www.meruki.cn/userGuide/novice-strategy?code=novice-strategy ，确保合单方案合规。
 
 由于平台规则、海关政策可能发生改变，此程序的计算结果仅供参考。
+
+---
+
+【2025.11.19】
+
+可追踪小航空服务即将关闭，暂计划在关闭后移除此物流方式.
+
+<img width="647" height="918" alt="image" src="https://github.com/user-attachments/assets/d96b1bd7-3e58-4894-b8a8-ba426e5e2302" />
+
+
