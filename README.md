@@ -62,12 +62,4 @@
 
 由于平台规则、海关政策可能发生改变，此程序的计算结果仅供参考。
 
----
-
-【2025.11.19】
-
-可追踪小航空服务即将关闭，暂计划在关闭后移除此物流方式.
-
-<img width="647" height="918" alt="image" src="https://github.com/user-attachments/assets/d96b1bd7-3e58-4894-b8a8-ba426e5e2302" />
-
 
