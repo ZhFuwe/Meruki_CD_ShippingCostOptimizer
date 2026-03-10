@@ -21,7 +21,7 @@
 
 在运行优化器前，你需要正确填写`ShoppingList.csv`，一行对应一个待合单订单，示例如下：
 
-
+<img width="2161" height="981" alt="image" src="https://github.com/user-attachments/assets/ce7dd0aa-a1a6-4bc6-9826-3835252c5a78" />
 
 新增字段`是否支持竹蜻蜓echo`（Y/N）：若某个订单不支持该渠道，请填`N`，程序将不会把包含该订单的包裹分配到`竹蜻蜓Echo`。
 
