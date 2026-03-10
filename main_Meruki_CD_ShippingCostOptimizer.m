@@ -3,35 +3,67 @@ function main_Meruki_CD_ShippingCostOptimizer()
     clear; clc; close all;
 
     % --- 贪心算法参数 ---
-    greedy_pool_size = 500;          % 生成的贪心候选解的数量
+    greedy_pool_size = 500;              % 生成的贪心候选解的数量
     
     % --- PSO-SA ---
-    run_pso_sa_optimization = false; % true = 深度优化, false = 快速求解
+    run_pso_sa_optimization = false;     % true = 深度优化, false = 快速求解
     
     % PSO-粒子群参数
-    swarm_size = 50;                 % 精英粒子数量
-    max_generations = 30;            % 最大演化代数
-    c1 = 1.5; c2 = 1.5;              % 学习因子
+    swarm_size = 50;                     % 精英粒子数量
+    max_generations = 30;                % 最大演化代数
+    c1 = 1.5; c2 = 1.5;                  % 学习因子
     
     % SA-模拟退火参数
-    sa_iterations = 20;              % 每个粒子进行局部搜索的迭代次数
-    sa_temperature = 5000;           % 局部搜索的初始温度
-    sa_alpha = 0.9;                  % 局部搜索的降温率
+    sa_iterations = 20;                  % 每个粒子进行局部搜索的迭代次数
+    sa_temperature = 5000;               % 局部搜索的初始温度
+    sa_alpha = 0.9;                      % 局部搜索的降温率
     
     % --- 其他参数 ---
-    CNY_TO_JPY_RATE = 20.59;         % 汇率
-    points_balance = 2313 ;          % 积分余额
+    JPY_TO_CNY_RATE = 0.0458;            % 汇率
+    max_package_count = 5;               % 最大包裹数
+    alternative_threshold_ratio = 0.05;  % 备选方案阈值，相对最优成本的比例
+    max_output_count = 20;               % 输出方案数量上限
+    points_balance = 100;                % 积分余额
+    
+    % --- 检查参数 ---
+    if max_package_count <= 0 || floor(max_package_count) ~= max_package_count
+        error('max_package_count 必须是正整数');
+    end
+    if alternative_threshold_ratio < 0
+        error('alternative_threshold_ratio 不能为负数');
+    end
+    if max_output_count <= 0 || floor(max_output_count) ~= max_output_count
+        error('max_output_count 必须是正整数');
+    end
+    if JPY_TO_CNY_RATE <= 0
+        error('JPY_TO_CNY_RATE 必须大于 0');
+    end
+    CNY_TO_JPY_RATE = 1 / JPY_TO_CNY_RATE; % 汇率换算
+
 
     %% --- 数据加载与预处理 ---
     try
         fprintf('正在解析数据文件...\n');
         opts = detectImportOptions('ShoppingList.csv', 'Encoding', 'UTF-8');
         opts.VariableNamingRule = 'preserve';
-        opts.VariableTypes{1} = 'double'; opts.VariableTypes{4} = 'double';
-        opts.VariableTypes{5} = 'double'; opts.VariableTypes{6} = 'double';
-        opts.VariableTypes{7} = 'double'; opts.VariableTypes{8} = 'string';
-        opts.VariableTypes{9} = 'double';
+        numeric_cols = intersect({'序号', '价格CN', '重量', '体积', '盘数', '专辑数', '非CD金额CN', '非CD税费CN'}, opts.VariableNames);
+        string_cols = intersect({'是否为单盘', '是否支持竹蜻蜓echo'}, opts.VariableNames);
+        if ~isempty(numeric_cols), opts = setvartype(opts, numeric_cols, 'double'); end
+        if ~isempty(string_cols), opts = setvartype(opts, string_cols, 'string'); end
         orders = readtable('ShoppingList.csv', opts);
+        if ~ismember('是否支持竹蜻蜓echo', orders.Properties.VariableNames)
+            orders.('是否支持竹蜻蜓echo') = repmat("Y", height(orders), 1);
+        end
+        if ~ismember('非CD金额CN', orders.Properties.VariableNames)
+            orders.('非CD金额CN') = zeros(height(orders), 1);
+        end
+        if ~ismember('非CD税费CN', orders.Properties.VariableNames)
+            orders.('非CD税费CN') = zeros(height(orders), 1);
+        end
+        orders.('非CD金额CN') = str2double(string(orders.('非CD金额CN')));
+        orders.('非CD税费CN') = str2double(string(orders.('非CD税费CN')));
+        orders.('非CD金额CN')(isnan(orders.('非CD金额CN'))) = 0;
+        orders.('非CD税费CN')(isnan(orders.('非CD税费CN'))) = 0;
         num_orders = height(orders);
         raw_price_data = readcell('ExpressPrice.csv', 'Encoding', 'UTF-8');
         shipping_methods = string(raw_price_data(1, 2:end));
@@ -62,13 +94,8 @@ function main_Meruki_CD_ShippingCostOptimizer()
         disp('错误：数据文件加载或解析失败。'); disp(ME.message); return;
     end
 
-    %% --- 用户输入 ---
-    prompt = {'请输入您希望合并包裹的最大数量:'};
-    dlgtitle = '设置'; dims = [1 50]; definput = {'3'};
-    answer = inputdlg(prompt, dlgtitle, dims, definput);
-    if isempty(answer), disp('用户取消了操作。'); return; end
-    k = str2double(answer{1});
-    if isnan(k) || k <= 0 || floor(k) ~= k, disp('错误：请输入一个正整数。'); return; end
+    %% --- 运行参数 ---
+    k = max_package_count;
 
     %% --- 算法主流程 ---
     fprintf('--- 阶段一：贪心策略生成 %d 个方案 ---\n', greedy_pool_size);
@@ -80,14 +107,17 @@ function main_Meruki_CD_ShippingCostOptimizer()
         [solution, cost] = createGreedyInitialSolution(orders, k, CNY_TO_JPY_RATE, shipping_methods, weight_limits, numeric_price_data, strategy, points_balance);
         greedy_solutions{i} = solution;
         greedy_costs(i) = cost;
-        if mod(i, 100) == 0, fprintf('已生成 %d / %d 个方案...\n', i, greedy_pool_size); end
+        if mod(i, 10) == 0 || i == greedy_pool_size
+            current_best_cost = min(greedy_costs(1:i));
+            fprintf('已生成 %d / %d 个方案，当前最优成本: %.2f JPY\n', i, greedy_pool_size, current_best_cost);
+        end
     end
     [best_greedy_cost, best_greedy_idx] = min(greedy_costs);
     best_greedy_solution = greedy_solutions{best_greedy_idx};
     fprintf('贪心阶段完成。发现的最佳方案成本为: %.2f JPY\n\n', best_greedy_cost);
     
-    final_solutions = {best_greedy_solution};
-    final_cost = best_greedy_cost;
+    candidate_solutions = greedy_solutions;
+    candidate_costs = greedy_costs;
     
     if run_pso_sa_optimization
         fprintf('--- 阶段二：PSO-SA 深度优化 ---\n');
@@ -147,20 +177,79 @@ function main_Meruki_CD_ShippingCostOptimizer()
             gbest_history = [gbest_history, gbest_cost];
             fprintf('第 %d 代演化完成, 当前最优总成本: %.2f JPY, 已发现 %d 个最优方案\n', gen, gbest_cost, length(gbest_solutions));
         end
+
+        candidate_solutions = [candidate_solutions; gbest_solutions(:)];
+        candidate_costs = [candidate_costs; ones(length(gbest_solutions), 1) * gbest_cost];
     end
+
+    unique_solution_bank = {};
+    unique_solutions = {};
+    unique_costs = [];
+    for i = 1:length(candidate_solutions)
+        if isinf(candidate_costs(i)) || isempty(candidate_solutions{i})
+            continue;
+        end
+        canonical_str = getCanonicalString(candidate_solutions{i}, k, num_orders);
+        existing_idx = find(strcmp(unique_solution_bank, canonical_str), 1);
+        if isempty(existing_idx)
+            unique_solution_bank{end+1} = canonical_str;
+            unique_solutions{end+1} = candidate_solutions{i};
+            unique_costs(end+1) = candidate_costs(i);
+        elseif candidate_costs(i) < unique_costs(existing_idx)
+            unique_solutions{existing_idx} = candidate_solutions{i};
+            unique_costs(existing_idx) = candidate_costs(i);
+        end
+    end
+
+    if isempty(unique_costs)
+        final_solutions = {best_greedy_solution};
+        final_costs = best_greedy_cost;
+    else
+        best_cost = min(unique_costs);
+        threshold_cost = best_cost * (1 + alternative_threshold_ratio);
+        keep_mask = unique_costs <= (threshold_cost + 1e-6);
+        selected_solutions = unique_solutions(keep_mask);
+        selected_costs = unique_costs(keep_mask);
+
+        [sorted_selected_costs, sort_idx] = sort(selected_costs, 'ascend');
+        sorted_selected_solutions = selected_solutions(sort_idx);
+
+        output_count = min(length(sorted_selected_solutions), max_output_count);
+        final_solutions = sorted_selected_solutions(1:output_count);
+        final_costs = sorted_selected_costs(1:output_count);
+    end
+
+    final_cost = min(final_costs);
+    threshold_cost = final_cost * (1 + alternative_threshold_ratio);
     
     %% --- 结果输出与记录 ---
     fprintf('\n--------------------------------------------------\n');
     fprintf('          *** 优化计算完成 ***\n');
     fprintf('--------------------------------------------------\n');
     [~, ~, total_points_used] = calculateCostAndDetails(final_solutions{1}, orders, k, CNY_TO_JPY_RATE, shipping_methods, weight_limits, numeric_price_data, points_balance);
+    optimal_count = sum(abs(final_costs - final_cost) < 1e-6);
+    alternative_count = length(final_solutions) - optimal_count;
+    threshold_pct = alternative_threshold_ratio * 100;
     output_str = sprintf('查询时间: %s\n', datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
-    output_str = [output_str, sprintf('最终找到 %d 个成本为 %.2f JPY 的最优方案\n', length(final_solutions), final_cost)];
+    output_str = [output_str, sprintf('最终输出 %d 个方案（最优方案 %d 个，%.2f%%以内备选方案 %d 个，最多保留 %d 个）\n', length(final_solutions), optimal_count, threshold_pct, alternative_count, max_output_count)];
+    output_str = [output_str, sprintf('最优成本: %.2f JPY；备选方案成本上限: %.2f JPY\n', final_cost, threshold_cost)];
     output_str = [output_str, sprintf('积分使用情况: 初始积分 %d, 使用 %d, 剩余 %d\n\n', points_balance, total_points_used, points_balance - total_points_used)];
     for i = 1:length(final_solutions)
         solution = final_solutions{i};
+        solution_cost = final_costs(i);
+        if final_cost > 0
+            delta_pct = (solution_cost - final_cost) / final_cost * 100;
+        else
+            delta_pct = 0;
+        end
+        if abs(solution_cost - final_cost) < 1e-6
+            solution_tag = '最优方案';
+        else
+            solution_tag = sprintf('备选方案（高 %.2f%%）', delta_pct);
+        end
         [~, package_details] = calculateCostAndDetails(solution, orders, k, CNY_TO_JPY_RATE, shipping_methods, weight_limits, numeric_price_data, points_balance);
-        output_str = [output_str, sprintf('=============== 方案 %d ===============\n', i)];
+        output_str = [output_str, sprintf('=============== 方案 %d：%s ===============\n', i, solution_tag)];
+        output_str = [output_str, sprintf('方案总成本: %.2f JPY\n', solution_cost)];
         output_str = [output_str, formatOutput(package_details, k)];
     end
     disp(output_str);
@@ -201,8 +290,9 @@ function [total_cost, package_details, total_points_used] = calculateCostAndDeta
         final_solution = solution(active_indices);
         final_orders = orders(active_indices, :);
     end
-    base_packages = struct('Items', [], 'OrderCount', 0, 'TotalWeight', 0, 'TotalVolume', 0, 'TotalPriceCNY', 0, 'TotalDiscs', 0, 'TotalAlbums', 0, 'HasMultiDiscAlbum', false);
+    base_packages = struct('Items', [], 'OrderCount', 0, 'TotalWeight', 0, 'TotalVolume', 0, 'TotalPriceCNY', 0, 'TotalNonCDPriceCNY', 0, 'TotalNonCDDutyCNY', 0, 'TotalDiscs', 0, 'TotalAlbums', 0, 'HasMultiDiscAlbum', false, 'SupportsEcho', true);
     base_packages = repmat(base_packages, k, 1);
+    has_echo_support_col = ismember('是否支持竹蜻蜓echo', final_orders.Properties.VariableNames);
     for i = 1:length(final_solution)
         pkg_idx = final_solution(i);
         order_row = final_orders(i, :);
@@ -211,9 +301,15 @@ function [total_cost, package_details, total_points_used] = calculateCostAndDeta
         base_packages(pkg_idx).TotalWeight = base_packages(pkg_idx).TotalWeight + order_row{1, 5};
         base_packages(pkg_idx).TotalVolume = base_packages(pkg_idx).TotalVolume + order_row{1, 6};
         base_packages(pkg_idx).TotalPriceCNY = base_packages(pkg_idx).TotalPriceCNY + order_row{1, 4};
+        base_packages(pkg_idx).TotalNonCDPriceCNY = base_packages(pkg_idx).TotalNonCDPriceCNY + order_row{1, '非CD金额CN'};
+        base_packages(pkg_idx).TotalNonCDDutyCNY = base_packages(pkg_idx).TotalNonCDDutyCNY + order_row{1, '非CD税费CN'};
         base_packages(pkg_idx).TotalDiscs = base_packages(pkg_idx).TotalDiscs + order_row{1, 7};
         base_packages(pkg_idx).TotalAlbums = base_packages(pkg_idx).TotalAlbums + order_row{1, 9};
         if strcmp(upper(strtrim(order_row{1, 8})), 'N'), base_packages(pkg_idx).HasMultiDiscAlbum = true; end
+        if has_echo_support_col
+            echo_support_flag = upper(strtrim(string(order_row{1, '是否支持竹蜻蜓echo'})));
+            if echo_support_flag == "N", base_packages(pkg_idx).SupportsEcho = false; end
+        end
     end
     opportunities = []; base_cost_sum = 0; final_package_choices = cell(k, 1);
     for i = 1:k
@@ -221,9 +317,11 @@ function [total_cost, package_details, total_points_used] = calculateCostAndDeta
         pkg = base_packages(i);
         [best_ineligible, best_eligible] = getBestOptions(pkg, methods, w_limits, p_data, rate);
         if isinf(best_ineligible.cost) && isinf(best_eligible.cost), total_cost=inf; package_details=[]; total_points_used=0; return; end
-        if ~isinf(best_eligible.cost) && best_eligible.ship > 0
+        if isfinite(best_ineligible.cost) && isfinite(best_eligible.cost) && best_eligible.ship > 0
             switch_cost = best_eligible.cost - best_ineligible.cost;
-            opportunities(end+1,:) = [i, switch_cost, best_eligible.ship];
+            if switch_cost >= 0
+                opportunities(end+1,:) = [i, switch_cost, best_eligible.ship];
+            end
         end
         if best_ineligible.cost <= best_eligible.cost, final_package_choices{i} = best_ineligible; base_cost_sum = base_cost_sum + best_ineligible.cost;
         else, final_package_choices{i} = best_eligible; base_cost_sum = base_cost_sum + best_eligible.cost; end
@@ -249,16 +347,18 @@ function [total_cost, package_details, total_points_used] = calculateCostAndDeta
     end
     total_cost = base_cost_sum;
     total_points_used = points - remaining_points;
-    empty_package = struct('Items',[],'OrderCount',0,'TotalWeight',0,'TotalVolume',0,'TotalPriceCNY',0,'TotalDiscs',0,'TotalAlbums',0,'HasMultiDiscAlbum',false,'BestMethod','N/A','ShippingFee',0,'Duty',0,'HandlingFee',0,'PointsUsed',0,'TotalPackageCost',0);
+    empty_package = struct('Items',[],'OrderCount',0,'TotalWeight',0,'TotalVolume',0,'TotalPriceCNY',0,'TotalNonCDPriceCNY',0,'TotalDiscs',0,'TotalAlbums',0,'HasMultiDiscAlbum',false,'BestMethod','N/A','ShippingFee',0,'CDDuty',0,'NonCDDuty',0,'Duty',0,'HandlingFee',0,'PointsUsed',0,'TotalPackageCost',0);
     package_details = repmat(empty_package, k, 1);
     for i = 1:k
         if base_packages(i).OrderCount == 0 continue; end
         final_choice = final_package_choices{i};
         package_details(i).Items=base_packages(i).Items; package_details(i).OrderCount=base_packages(i).OrderCount;
         package_details(i).TotalWeight=base_packages(i).TotalWeight; package_details(i).TotalVolume=base_packages(i).TotalVolume;
-        package_details(i).TotalPriceCNY=base_packages(i).TotalPriceCNY; package_details(i).TotalDiscs=base_packages(i).TotalDiscs;
+        package_details(i).TotalPriceCNY=base_packages(i).TotalPriceCNY; package_details(i).TotalNonCDPriceCNY=base_packages(i).TotalNonCDPriceCNY;
+        package_details(i).TotalDiscs=base_packages(i).TotalDiscs;
         package_details(i).TotalAlbums=base_packages(i).TotalAlbums; package_details(i).HasMultiDiscAlbum=base_packages(i).HasMultiDiscAlbum;
         package_details(i).BestMethod=final_choice.method; package_details(i).ShippingFee=final_choice.ship;
+        package_details(i).CDDuty=final_choice.cd_duty; package_details(i).NonCDDuty=final_choice.noncd_duty;
         package_details(i).Duty=final_choice.duty; package_details(i).HandlingFee=final_choice.handle;
         if isfield(final_choice,'points_used'), package_details(i).PointsUsed=final_choice.points_used; end
         package_details(i).TotalPackageCost=final_choice.cost;
@@ -266,14 +366,19 @@ function [total_cost, package_details, total_points_used] = calculateCostAndDeta
 end
 
 function [best_ineligible, best_eligible] = getBestOptions(pkg, methods, w_limits, p_data, rate)
-    best_ineligible = struct('cost',inf,'method','N/A','ship',0,'duty',0,'handle',0);
-    best_eligible = struct('cost',inf,'method','N/A','ship',0,'duty',0,'handle',0);
+    best_ineligible = struct('cost',inf,'method','N/A','ship',0,'duty',0,'cd_duty',0,'noncd_duty',0,'handle',0);
+    best_eligible = struct('cost',inf,'method','N/A','ship',0,'duty',0,'cd_duty',0,'noncd_duty',0,'handle',0);
     for j = 1:length(methods)
         method=methods(j); 
         shipping_fee=getShippingFee(w_limits,p_data,j,pkg.TotalWeight);
+        declared_price_cny = pkg.TotalPriceCNY + pkg.TotalNonCDPriceCNY;
         
         if isinf(shipping_fee) continue; end % 超重
         if strcmp(method,'竹蜻蜓Plus')&&pkg.TotalVolume>9000 continue; end % 体积限制
+        if contains(method,'邮政') && declared_price_cny > 2000 continue; end % 邮政单包金额限制
+        if strcmp(method,'竹蜻蜓Echo') && declared_price_cny > 2000 continue; end % 竹蜻蜓Echo单包金额限制
+        if strcmp(method,'竹蜻蜓Echo') && ~pkg.SupportsEcho continue; end % 订单不支持竹蜻蜓Echo
+        if strcmp(method,'竹蜻蜓Echo') && (pkg.TotalNonCDPriceCNY > 0 || pkg.TotalNonCDDutyCNY > 0) continue; end % Echo不支持非CD商品
 
         % 订单数量限制
         if (strcmp(method, '竹蜻蜓Max') || strcmp(method, '竹蜻蜓Echo')) && pkg.OrderCount > 14
@@ -301,26 +406,42 @@ function [best_ineligible, best_eligible] = getBestOptions(pkg, methods, w_limit
             handling_fee = 200;
         end
 
-        % 关税
-        if contains(method,'邮政')
-            if pkg.HasMultiDiscAlbum, if pkg.TotalAlbums>3, duty=pkg.TotalPriceCNY*0.2*rate; end
-            else, if pkg.TotalDiscs>20, duty=pkg.TotalPriceCNY*0.2*rate; end
+        % 关税（CD税费与非CD税费分别计算）
+        cd_duty_cny = 0;
+        noncd_duty_cny = pkg.TotalNonCDDutyCNY;
+        total_duty_cny = 0;
+
+        if strcmp(method, '竹蜻蜓Plus')
+            cd_duty_cny = 0;
+            noncd_duty_cny = 0;
+            total_duty_cny = 0;
+        elseif strcmp(method, '竹蜻蜓') || strcmp(method, '竹蜻蜓Max')
+            cd_duty_cny = pkg.TotalPriceCNY * 0.2; % 无CD免税政策
+            total_duty_cny = cd_duty_cny + noncd_duty_cny;
+        elseif strcmp(method, '竹蜻蜓Echo')
+            if pkg.TotalDiscs > 20 % Echo适用CD免税政策
+                cd_duty_cny = pkg.TotalPriceCNY * 0.2;
             end
-        elseif contains(method,'竹蜻蜓')
-            if ~strcmp(method,'竹蜻蜓Echo') % 关税 for 竹蜻蜓, Plus, Max
-                if pkg.TotalPriceCNY*0.2>50, duty=pkg.TotalPriceCNY*0.2*rate; end
-            else % 关税 for 竹蜻蜓Echo
-                if pkg.TotalDiscs>20&&pkg.TotalDiscs>0
-                    avg_p=pkg.TotalPriceCNY/pkg.TotalDiscs; 
-                    tax_p=(pkg.TotalDiscs-20)*avg_p; 
-                    pot_d=tax_p*0.2; 
-                    if pot_d>=50, duty=pot_d*rate; end
-                end
+            total_duty_cny = cd_duty_cny;
+            noncd_duty_cny = 0;
+        elseif contains(method, '邮政')
+            if pkg.TotalDiscs > 20 % CD免税政策：20盘及以下免税
+                cd_duty_cny = pkg.TotalPriceCNY * 0.2;
+            end
+            total_tax_cny = cd_duty_cny + noncd_duty_cny;
+            if total_tax_cny > 50 % 邮政总税费门槛
+                total_duty_cny = total_tax_cny;
+            else
+                total_duty_cny = 0;
             end
         end
 
+        cd_duty_jpy = cd_duty_cny * rate;
+        noncd_duty_jpy = noncd_duty_cny * rate;
+        duty = total_duty_cny * rate;
+
         cost = shipping_fee+duty+handling_fee;
-        current_choice = struct('cost',cost,'method',method,'ship',shipping_fee,'duty',duty,'handle',handling_fee);
+        current_choice = struct('cost',cost,'method',method,'ship',shipping_fee,'duty',duty,'cd_duty',cd_duty_jpy,'noncd_duty',noncd_duty_jpy,'handle',handling_fee);
         
         if contains(method,'竹蜻蜓'), if cost<best_ineligible.cost, best_ineligible=current_choice; end
         else, if cost<best_eligible.cost, best_eligible=current_choice; end; end
@@ -337,7 +458,10 @@ function canonical_str = getCanonicalString(solution, k, num_orders)
         [~, sort_indices] = sort(first_elements);
         sorted_packages = non_empty_packages(sort_indices);
         str_parts = cell(1, length(sorted_packages));
-        for i = 1:length(sorted_packages), str_parts{i} = strjoin(string(sorted_packages{i}), ','); end
+        for i = 1:length(sorted_packages)
+            str_parts{i} = sprintf('%d,', sorted_packages{i});
+            str_parts{i}(end) = [];
+        end
         canonical_str = strjoin(str_parts, '_');
     else, canonical_str = ''; end
 end
@@ -374,21 +498,25 @@ function output_str = formatOutput(package_details, k)
             '  - 订单数量: %d\n' ...
             '  - 总重量: %.2f g\n' ...
             '  - 总体积: %.2f\n' ...
-            '  - 总价格: %.2f CNY\n' ...
+            '  - CD总价格: %.2f CNY\n' ...
+            '  - 非CD总金额: %.2f CNY\n' ...
             '  - 总盘数: %d\n' ...
             '  - 专辑数: %d\n' ...
             '  - 运费(抵扣前): %.2f JPY\n' ...
             '  - 积分抵扣: -%d JPY\n' ...
             '  - 运费(抵扣后): %.2f JPY\n' ...
+            '  - CD税费: %.2f JPY\n' ...
+            '  - 非CD税费: %.2f JPY\n' ...
             '  - 关税: %.2f JPY\n' ...
             '  - 手续费: %d JPY\n' ...
             '  - 此包裹总计: %.2f JPY\n\n'], ...
             i, package_details(i).BestMethod, items_str, package_details(i).OrderCount, ...
             package_details(i).TotalWeight, package_details(i).TotalVolume, ...
-            package_details(i).TotalPriceCNY, package_details(i).TotalDiscs, package_details(i).TotalAlbums, ...
+            package_details(i).TotalPriceCNY, package_details(i).TotalNonCDPriceCNY, package_details(i).TotalDiscs, package_details(i).TotalAlbums, ...
             package_details(i).ShippingFee, ...
             package_details(i).PointsUsed, ...
             package_details(i).ShippingFee - package_details(i).PointsUsed, ...
+            package_details(i).CDDuty, package_details(i).NonCDDuty, ...
             package_details(i).Duty, package_details(i).HandlingFee, package_details(i).TotalPackageCost)];
     end
 end
